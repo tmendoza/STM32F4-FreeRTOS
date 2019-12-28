@@ -13,26 +13,6 @@
 StackType_t fpuTaskStack[FPU_TASK_STACK_SIZE] CCM_RAM;  // Put task stack in CCM
 StaticTask_t fpuTaskBuffer CCM_RAM;  // Put TCB in CCM
 
-void init_USART3(void);
-
-void test_FPU_test(void* p);
-
-int main(void) {
-  SystemInit();
-  NVIC_PriorityGroupConfig(NVIC_PriorityGroup_4);
-  init_USART3();
-
-  // Create a task
-  // Stack and TCB are placed in CCM of STM32F4
-  // The CCM block is connected directly to the core, which leads to zero wait states
-  xTaskCreateStatic(test_FPU_test, "FPU", FPU_TASK_STACK_SIZE, NULL, 1, fpuTaskStack, &fpuTaskBuffer);
-
-  printf("System Started!\n");
-  vTaskStartScheduler();  // should never return
-
-  for (;;);
-}
-
 void vApplicationTickHook(void) {
 }
 
@@ -105,24 +85,17 @@ void vApplicationGetTimerTaskMemory(StaticTask_t **ppxTimerTaskTCBBuffer, StackT
   *pulTimerTaskStackSize = configTIMER_TASK_STACK_DEPTH;
 }
 
-void test_FPU_test(void* p) {
-  float ff = 1.0f;
-  printf("Start FPU test task.\n");
-  for (;;) {
-    float s = sinf(ff);
-    ff += s;
-    // TODO some other test
+TaskHandle_t task1_handle = NULL;
+TaskHandle_t task2_handle = NULL;
+TaskHandle_t task3_handle = NULL;
+TaskHandle_t task4_handle = NULL;
+TaskHandle_t task5_handle = NULL;
 
-    vTaskDelay(1000);
-  }
-
-  vTaskDelete(NULL);
-}
 
 /*
  * Configure USART3(PB10, PB11) to redirect printf data to host PC.
  */
-void init_USART3(void) {
+void init_usart3(void) {
   GPIO_InitTypeDef GPIO_InitStruct;
   USART_InitTypeDef USART_InitStruct;
 
@@ -148,3 +121,133 @@ void init_USART3(void) {
   USART_Init(USART3, &USART_InitStruct);
   USART_Cmd(USART3, ENABLE);
 }
+
+void init_leds(void) {
+   // Enable clock for GPIOD (for orange LED)
+    RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOD, ENABLE);
+
+    // Initialization of GPIOD (for orange LED)
+    GPIO_InitTypeDef GPIO_InitDef;
+    GPIO_InitDef.GPIO_Pin = GPIO_Pin_12 | GPIO_Pin_13 | GPIO_Pin_14 | GPIO_Pin_15;
+    GPIO_InitDef.GPIO_Mode = GPIO_Mode_OUT;
+    GPIO_InitDef.GPIO_OType = GPIO_OType_PP;
+    GPIO_InitDef.GPIO_PuPd = GPIO_PuPd_NOPULL;
+    GPIO_InitDef.GPIO_Speed = GPIO_Speed_50MHz;
+    GPIO_Init(GPIOD, &GPIO_InitDef);
+
+}
+
+void usart_putchar(char c)
+{
+    // Wait until transmit data register is empty
+    while (!USART_GetFlagStatus(USART3, USART_FLAG_TXE));
+    // Send a char using USART3
+    USART_SendData(USART3, c);
+}
+
+void usart_putstr(char *s)
+{
+    // Send a string
+    while (*s)
+    {
+        usart_putchar(*s++);
+    }
+}
+
+uint16_t usart_getchar()
+{
+    // Wait until data is received
+    while (!USART_GetFlagStatus(USART3, USART_FLAG_RXNE));
+    // Read received char
+    return USART_ReceiveData(USART3);
+}
+
+void my_task1(void *p) {
+  TickType_t last_unblock;
+  last_unblock = xTaskGetTickCount();
+
+  int count = 0;
+
+  while(1) {
+    printf("Hello World Counter: %d\r\n", count++);
+
+    vTaskDelayUntil( &last_unblock, 1000 / portTICK_RATE_MS);
+
+    if(count == 30) {
+      vTaskDelete(task1_handle);
+    }
+  }
+}
+
+void my_task2(void *p) {
+  TickType_t last_unblock;
+  last_unblock = xTaskGetTickCount();
+
+  while(1) {
+    GPIO_SetBits(GPIOD, GPIO_Pin_12);
+    vTaskDelayUntil( &last_unblock, pdMS_TO_TICKS( 1000 ));
+    GPIO_ResetBits(GPIOD, GPIO_Pin_12);
+    vTaskDelayUntil( &last_unblock, pdMS_TO_TICKS( 1000 ));
+  }
+}
+
+void my_task3(void *p) {
+  TickType_t last_unblock;
+  last_unblock = xTaskGetTickCount();
+
+  while(1) {
+    GPIO_SetBits(GPIOD, GPIO_Pin_13);
+    vTaskDelayUntil( &last_unblock, pdMS_TO_TICKS( 600 ));
+    GPIO_ResetBits(GPIOD, GPIO_Pin_13);
+    vTaskDelayUntil( &last_unblock, pdMS_TO_TICKS( 600 ));
+  }
+}
+
+void my_task4(void *p) {
+  TickType_t last_unblock;
+  last_unblock = xTaskGetTickCount();
+
+  while(1) {
+    GPIO_SetBits(GPIOD, GPIO_Pin_14);
+    vTaskDelayUntil( &last_unblock, pdMS_TO_TICKS( 400 ));
+    GPIO_ResetBits(GPIOD, GPIO_Pin_14);
+    vTaskDelayUntil( &last_unblock, pdMS_TO_TICKS( 400 ));
+  }
+}
+
+void my_task5(void *p) {
+  TickType_t last_unblock;
+  last_unblock = xTaskGetTickCount();
+
+  while(1) {
+    GPIO_SetBits(GPIOD, GPIO_Pin_15);
+    vTaskDelayUntil( &last_unblock, pdMS_TO_TICKS( 200 ));
+    GPIO_ResetBits(GPIOD, GPIO_Pin_15);
+    vTaskDelayUntil( &last_unblock, pdMS_TO_TICKS( 200 ));
+  }
+}
+
+int main(void) {
+
+  init_usart3();
+  init_leds();
+
+  printf("Creating Tasks...\r\n");
+  printf("Launching Counter...\r\n");
+  
+  xTaskCreate(my_task1, "task1", 200, (void*) 0, 5, &task1_handle);
+  xTaskCreate(my_task2, "task2", 200, (void*) 0, 4, &task2_handle);
+  xTaskCreate(my_task3, "task3", 200, (void*) 0, 3, &task3_handle);
+  xTaskCreate(my_task4, "task4", 200, (void*) 0, 2, &task4_handle);
+  xTaskCreate(my_task5, "task5", 200, (void*) 0, 1, &task5_handle);
+
+  printf("Counter Launched.\r\n");
+  printf("System Started!\r\n");
+
+  vTaskStartScheduler();
+
+  while(1) {
+    /* Add app code here */
+  }
+}
+
