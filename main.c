@@ -3,7 +3,10 @@
 #include "task.h"
 #include "math.h"
 #include "stdio.h"
+#include "stm32f4xx_exti.h"
+#include "stm32f4xx_syscfg.h"
 #include "stm32f4xx_usart.h"
+#include "misc.h"
 
 // Macro to use CCM (Core Coupled Memory) in STM32F4
 #define CCM_RAM __attribute__((section(".ccmram")))
@@ -90,6 +93,7 @@ TaskHandle_t task2_handle = NULL;
 TaskHandle_t task3_handle = NULL;
 TaskHandle_t task4_handle = NULL;
 TaskHandle_t task5_handle = NULL;
+TaskHandle_t button_task_handle = NULL;
 
 
 /*
@@ -135,6 +139,88 @@ void init_leds(void) {
     GPIO_InitDef.GPIO_Speed = GPIO_Speed_50MHz;
     GPIO_Init(GPIOD, &GPIO_InitDef);
 
+}
+
+void init_user_button(void) {
+  //Enable clock for GPOIA
+  //RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
+
+  //GPIO_InitTypeDef GPIO_InitDef;
+  //Pin 0
+  //GPIO_InitDef.GPIO_Pin = GPIO_Pin_0;
+  //Mode output
+  //GPIO_InitDef.GPIO_Mode = GPIO_Mode_IN;
+  //Output type push-pull
+  //GPIO_InitDef.GPIO_OType = GPIO_OType_PP;
+  //With pull down resistor
+  //GPIO_InitDef.GPIO_PuPd = GPIO_PuPd_DOWN;
+  //50MHz pin speed
+  //GPIO_InitDef.GPIO_Speed = GPIO_Speed_50MHz;
+
+  //Initialize pin on GPIOA port
+  // GPIO_Init(GPIOA, &GPIO_InitDef);
+
+  GPIO_InitTypeDef GPIO_InitStruct;
+  EXTI_InitTypeDef EXTI_InitStruct;
+  NVIC_InitTypeDef NVIC_InitStruct;
+    
+  /* Enable clock for GPIOD */
+  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
+  /* Enable clock for SYSCFG */
+  RCC_APB2PeriphClockCmd(RCC_APB2Periph_SYSCFG, ENABLE);
+    
+  /* Set pin as input */
+  GPIO_InitStruct.GPIO_Mode = GPIO_Mode_IN;
+  GPIO_InitStruct.GPIO_OType = GPIO_OType_PP;
+  GPIO_InitStruct.GPIO_Pin = GPIO_Pin_0;
+  GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_DOWN;
+  GPIO_InitStruct.GPIO_Speed = GPIO_Speed_50MHz;
+  GPIO_Init(GPIOA, &GPIO_InitStruct);
+    
+  /* Tell system that you will use PD0 for EXTI_Line0 */
+  SYSCFG_EXTILineConfig(EXTI_PortSourceGPIOA, EXTI_PinSource0);
+    
+  /* PD0 is connected to EXTI_Line0 */
+  EXTI_InitStruct.EXTI_Line = EXTI_Line0;
+  /* Enable interrupt */
+  EXTI_InitStruct.EXTI_LineCmd = ENABLE;
+  /* Interrupt mode */
+  EXTI_InitStruct.EXTI_Mode = EXTI_Mode_Interrupt;
+  /* Triggers on rising and falling edge */
+  EXTI_InitStruct.EXTI_Trigger = EXTI_Trigger_Rising_Falling;
+  /* Add to EXTI */
+  EXTI_Init(&EXTI_InitStruct);
+ 
+  NVIC_PriorityGroupConfig( NVIC_PriorityGroup_4 );
+  /* Add IRQ vector to NVIC */
+  /* PD0 is connected to EXTI_Line0, which has EXTI0_IRQn vector */
+  NVIC_InitStruct.NVIC_IRQChannel = EXTI0_IRQn;
+  /* Set priority */
+  NVIC_InitStruct.NVIC_IRQChannelPreemptionPriority = 15;
+  /* Set sub priority */
+  NVIC_InitStruct.NVIC_IRQChannelSubPriority = 0;
+  /* Enable interrupt */
+  NVIC_InitStruct.NVIC_IRQChannelCmd = ENABLE;
+  /* Add to NVIC */
+  NVIC_Init(&NVIC_InitStruct);
+  // 
+  
+}
+
+void EXTI0_IRQHandler(void) {
+  BaseType_t xHigherPriorityTaskWoken;
+
+  /* Make sure that interrupt flag is set */
+  if (EXTI_GetITStatus(EXTI_Line0) != RESET) {
+    /* Do your stuff when PD0 is changed */
+    xHigherPriorityTaskWoken = pdFALSE;
+    vTaskNotifyGiveFromISR(button_task_handle, &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+    //printf("Hello World!\r\n");
+    //portYIELD_FROM_ISR(check_yield);       
+    /* Clear interrupt flag */
+    EXTI_ClearITPendingBit(EXTI_Line0);
+  }
 }
 
 void usart_putchar(char c)
@@ -227,19 +313,74 @@ void my_task5(void *p) {
   }
 }
 
+void button_task(void *p) {
+  BaseType_t xEvent;
+  const TickType_t xBlockTime = pdMS_TO_TICKS( 500 );
+  uint32_t ulNotifiedValue;
+
+  for( ;; )
+  {
+    /* As before, block to wait for a notification form the ISR.  This
+    time however the first parameter is set to pdTRUE, clearing the task's
+    notification value to 0, meaning each outstanding outstanding deferred
+    interrupt event must be processed before ulTaskNotifyTake() is called
+    again. */
+    ulNotifiedValue = ulTaskNotifyTake( pdTRUE,
+                                        xBlockTime );
+
+    if( ulNotifiedValue == 0 )
+    {
+        /* Did not receive a notification within the expected time. */
+        //vCheckForErrorConditions();
+        continue;
+    }
+    else
+    {
+       /* ulNotifiedValue holds a count of the number of outstanding
+        interrupts.  Process each in turn. */
+        while( ulNotifiedValue > 0 )
+        {
+            // xEvent = xQueryPeripheral();
+
+            //if( xEvent != NO_MORE_EVENTS )
+            //{
+            //    vProcessPeripheralEvent( xEvent );
+                printf("Interrupted!\r\n");
+                ulNotifiedValue--;
+            //}
+            //else
+            //{
+            //    break;
+            //}
+        }
+      }
+    }  
+  //while (1) {
+        //if (GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_0)) {
+        //    printf("Button Pressed!\r\n");
+        //} 
+  //      vTaskSuspend(NULL); 
+  //      printf("Button Pressed!\r\n");
+  //  }
+}
+
 int main(void) {
 
   init_usart3();
   init_leds();
+  init_user_button();
+  
+  //NVIC_PriorityGroupConfig( NVIC_PriorityGroup_4 );
 
   printf("Creating Tasks...\r\n");
   printf("Launching Counter...\r\n");
   
-  xTaskCreate(my_task1, "task1", 200, (void*) 0, 5, &task1_handle);
-  xTaskCreate(my_task2, "task2", 200, (void*) 0, 4, &task2_handle);
-  xTaskCreate(my_task3, "task3", 200, (void*) 0, 3, &task3_handle);
-  xTaskCreate(my_task4, "task4", 200, (void*) 0, 2, &task4_handle);
-  xTaskCreate(my_task5, "task5", 200, (void*) 0, 1, &task5_handle);
+  xTaskCreate(my_task1, "task1", 200, (void*) 0, tskIDLE_PRIORITY, &task1_handle);
+  xTaskCreate(my_task2, "task2", 200, (void*) 0, tskIDLE_PRIORITY, &task2_handle);
+  xTaskCreate(my_task3, "task3", 200, (void*) 0, tskIDLE_PRIORITY, &task3_handle);
+  xTaskCreate(my_task4, "task4", 200, (void*) 0, tskIDLE_PRIORITY, &task4_handle);
+  xTaskCreate(my_task5, "task5", 200, (void*) 0, tskIDLE_PRIORITY, &task5_handle);
+  xTaskCreate(button_task, "button", 200, (void*) 0, tskIDLE_PRIORITY, &button_task_handle);
 
   printf("Counter Launched.\r\n");
   printf("System Started!\r\n");
